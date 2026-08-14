@@ -1,98 +1,271 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Wallet Clean Architecture
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Projeto de estudos: uma API REST de carteira digital (wallet) construída em **NestJS + TypeScript**, aplicando os princípios de **Clean Architecture** para separar regras de negócio de detalhes de infraestrutura (framework, banco de dados, HTTP).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+O objetivo não é entregar um produto completo, e sim demonstrar a organização em camadas, inversão de dependência e isolamento do domínio em um contexto prático: uma carteira que permite criar contas, depositar, sacar e transferir saldo entre contas.
 
-## Description
+> 🚧 Documentação da API via Swagger ainda não implementada — está no roadmap.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Índice
 
-## Project setup
+- [Sobre o projeto](#sobre-o-projeto)
+- [Arquitetura](#arquitetura)
+- [Stack técnica](#stack-técnica)
+- [Domínio: regras de negócio](#domínio-regras-de-negócio)
+- [Endpoints da API](#endpoints-da-api)
+- [Como rodar o projeto](#como-rodar-o-projeto)
+- [Testes](#testes)
+- [Limitações conhecidas / roadmap](#limitações-conhecidas--roadmap)
+- [Licença](#licença)
 
-```bash
-$ npm install
+## Sobre o projeto
+
+A aplicação modela uma carteira digital simples (`Account`), com saldo armazenado em **centavos** (inteiros) para evitar problemas de ponto flutuante. As operações suportadas são:
+
+- Criar uma conta
+- Depositar em uma conta
+- Sacar de uma conta
+- Transferir saldo entre duas contas
+
+Cada regra de negócio (valor inválido, saldo insuficiente, conta não encontrada, transferência para a própria conta) é modelada como uma exceção de domínio explícita, sem depender de nada do NestJS.
+
+## Arquitetura
+
+O projeto segue a divisão clássica de **Clean Architecture** em quatro camadas, com a regra de dependência sempre apontando para dentro (infraestrutura e apresentação dependem do domínio, nunca o contrário):
+
+```
+src/
+├── domain/account/                       # Regras de negócio puras (sem NestJS, sem TypeORM)
+│   ├── entities/account.entity.ts        # Entidade Account: cria, deposita, saca, valida
+│   ├── repositories/account.repository.ts# Interface do repositório (porta de saída)
+│   └── exceptions/                       # Exceções de domínio
+│
+├── application/account/use-cases/        # Casos de uso (orquestram o domínio)
+│   ├── create-account.use-case.ts
+│   ├── deposit.use-case.ts
+│   ├── withdraw.use-case.ts
+│   └── transfer.use-case.ts
+│
+├── infrastructure/database/typeorm/      # Implementação de persistência (adapter)
+│   ├── entities/account.orm-entity.ts    # Mapeamento TypeORM da tabela `accounts`
+│   └── repositories/typeorm-account.repository.ts # Implementa AccountRepository
+│
+├── presentation/account/                 # Camada HTTP (NestJS)
+│   ├── controllers/account.controller.ts
+│   ├── dtos/                             # Validação de entrada (class-validator)
+│   └── filters/domain-exception.filter.ts# Traduz exceções de domínio em respostas HTTP
+│
+├── account.module.ts                     # Módulo Nest: injeta use cases, repositório e controller
+├── app.module.ts                         # Módulo raiz: ConfigModule + TypeOrmModule
+└── main.ts                               # Bootstrap da aplicação + ValidationPipe global
 ```
 
-## Compile and run the project
+**Como as camadas se conectam:**
 
-```bash
-# development
-$ npm run start
+1. O `AccountController` (presentation) recebe a requisição HTTP, valida o DTO e chama um caso de uso.
+2. O caso de uso (application) orquestra a regra de negócio, falando apenas com a interface `AccountRepository` (domain) — nunca com TypeORM diretamente.
+3. A entidade `Account` (domain) concentra as invariantes de negócio (ex: não permitir depósito com valor negativo, não permitir saque maior que o saldo).
+4. O `TypeOrmAccountRepository` (infrastructure) implementa a interface do domínio, convertendo entre a entidade de domínio e a entidade ORM.
+5. Erros de domínio sobem como exceções simples (`Error`), que o `DomainExceptionFilter` (presentation) intercepta e traduz para o status HTTP correto.
 
-# watch mode
-$ npm run start:dev
+Essa inversão de dependência via interface (`AccountRepository`) é o que permite trocar o TypeORM/Postgres por qualquer outro mecanismo de persistência sem tocar em domínio ou casos de uso.
 
-# production mode
-$ npm run start:prod
+## Stack técnica
+
+| Categoria | Tecnologia |
+|---|---|
+| Linguagem | TypeScript 5 |
+| Framework | NestJS 11 |
+| Banco de dados | PostgreSQL 16 |
+| ORM | TypeORM (via `@nestjs/typeorm`) |
+| Validação | class-validator / class-transformer |
+| Testes | Jest + Supertest |
+| Lint / formatação | ESLint (flat config) + Prettier |
+| Containerização | Docker Compose (Postgres) |
+
+## Domínio: regras de negócio
+
+A entidade `Account` concentra as invariantes da carteira:
+
+- **Criação**: toda conta nasce com saldo zero e um `id` (UUID).
+- **Depósito**: o valor precisa ser um inteiro positivo (`amountInCents > 0`); caso contrário, lança `InvalidAmountException`.
+- **Saque**: além de validar o valor, verifica se há saldo suficiente; caso contrário, lança `InsufficientFundsException`.
+- **Transferência**: impede transferir uma conta para ela mesma (`EqualAccountsException`), busca origem e destino, saca da origem e deposita no destino.
+- **Conta inexistente**: qualquer operação sobre um `id` que não existe lança `ResourceNotFoundException`.
+
+Essas exceções são classes simples de domínio (sem depender do `HttpException` do Nest) e são traduzidas para códigos HTTP pelo `DomainExceptionFilter`:
+
+| Exceção de domínio | Status HTTP |
+|---|---|
+| `InvalidAmountException` | 400 Bad Request |
+| `EqualAccountsException` | 400 Bad Request |
+| `ResourceNotFoundException` | 404 Not Found |
+| `InsufficientFundsException` | 422 Unprocessable Entity |
+
+## Endpoints da API
+
+Todas as rotas estão sob o prefixo `/accounts`.
+
+### Criar conta
+
+```
+POST /accounts
+Content-Type: application/json
+
+{
+  "ownerName": "Jane Doe"
+}
 ```
 
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+**Resposta 201**
+```json
+{
+  "id": "b3f1c2a0-...-uuid",
+  "ownerName": "Jane Doe",
+  "balanceInCents": 0
+}
 ```
 
-## Deployment
+### Depositar
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+```
+POST /accounts/:id/deposit
+Content-Type: application/json
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+{
+  "amountInCents": 10000
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**Resposta 200**
+```json
+{
+  "accountId": "b3f1c2a0-...-uuid",
+  "newBalanceInCents": 10000
+}
+```
 
-## Resources
+### Sacar
 
-Check out a few resources that may come in handy when working with NestJS:
+```
+POST /accounts/:id/withdraw
+Content-Type: application/json
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+{
+  "amountInCents": 5000
+}
+```
 
-## Support
+**Resposta 200**
+```json
+{
+  "accountId": "b3f1c2a0-...-uuid",
+  "newBalanceInCents": 5000
+}
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Transferir entre contas
 
-## Stay in touch
+```
+POST /accounts/:id/transfer
+Content-Type: application/json
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+{
+  "toAccountId": "outro-uuid-de-conta",
+  "amountInCents": 2500
+}
+```
 
-## License
+**Resposta 200**
+```json
+{
+  "fromAccountId": "b3f1c2a0-...-uuid",
+  "fromAccountNewBalanceInCents": 2500,
+  "toAccountId": "outro-uuid-de-conta",
+  "toAccountNewBalanceInCents": 2500
+}
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Todos os DTOs de entrada são validados globalmente via `ValidationPipe` (`whitelist`, `forbidNonWhitelisted` e `transform` habilitados), então campos não esperados no corpo da requisição são rejeitados com `400 Bad Request`.
+
+## Como rodar o projeto
+
+### Pré-requisitos
+
+- Node.js 20+
+- Docker e Docker Compose (para o PostgreSQL)
+
+### 1. Clonar e instalar dependências
+
+```bash
+git clone <url-do-repositorio>
+cd wallet-clean-arch
+npm install
+```
+
+### 2. Configurar variáveis de ambiente
+
+Copie o `.env.example` para `.env` e ajuste se necessário:
+
+```bash
+cp .env.example .env
+```
+
+```env
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=wallet_user
+DATABASE_PASSWORD=wallet_pass
+DATABASE_NAME=wallet_db
+
+PORT=3000
+```
+
+### 3. Subir o banco de dados
+
+```bash
+docker-compose up -d
+```
+
+Isso sobe um container PostgreSQL 16 na porta `5432`, com os dados persistidos em um volume Docker.
+
+### 4. Rodar a aplicação
+
+```bash
+# modo desenvolvimento (watch)
+npm run start:dev
+
+# modo padrão
+npm run start
+
+# build + produção
+npm run build
+npm run start:prod
+```
+
+A API sobe em `http://localhost:3000` por padrão. O schema do banco é sincronizado automaticamente pelo TypeORM (`synchronize: true`) — não há migrations neste projeto de estudo.
+
+## Testes
+
+```bash
+npm run test        # testes unitários
+npm run test:e2e    # testes end-to-end
+npm run test:cov    # cobertura de testes
+```
+
+> ⚠️ A suíte de testes automatizados ainda não foi escrita — os scripts estão configurados, mas é um dos próximos passos do projeto (ver roadmap abaixo).
+
+## Limitações conhecidas / roadmap
+
+Este é um projeto de estudo, então algumas decisões foram feitas conscientemente para focar no aprendizado de Clean Architecture, e ficam registradas aqui como próximos passos:
+
+- [ ] Documentação da API via Swagger/OpenAPI
+- [ ] Testes unitários (domínio e use cases) e e2e (controllers)
+- [ ] Endpoints de consulta (`GET /accounts/:id`, `GET /accounts`)
+- [ ] Transferência entre contas dentro de uma transação de banco (atualmente são dois `save()` separados)
+- [ ] Migrations do TypeORM em vez de `synchronize: true` (adequado para estudo, não para produção)
+- [ ] Autenticação/autorização
+
+## Licença
+
+Projeto de estudo, sem licença definida (`UNLICENSED`) — sinta-se à vontade para usar como referência de aprendizado.
