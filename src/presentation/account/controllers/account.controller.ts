@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Param, Post, UseFilters } from '@nestjs/common';
 import { CreateAccountUseCase } from 'src/application/account/use-cases/create-account.use-case';
 import { DepositUseCase } from 'src/application/account/use-cases/deposit.use-case';
 import { TransferUseCase } from 'src/application/account/use-cases/transfer.use-case';
@@ -7,8 +7,10 @@ import { CreateAccountDto } from '../dtos/create-account.dto';
 import { DepositDto } from '../dtos/deposit.dto';
 import { WithdrawDto } from '../dtos/withdraw.dto';
 import { TransferDto } from '../dtos/transfer.dto';
+import { DomainExceptionFilter } from '../filters/domain-exception.filter';
 
 @Controller('accounts')
+@UseFilters(DomainExceptionFilter)
 export class AccountController {
   constructor(
     private readonly createAccountUseCase: CreateAccountUseCase,
